@@ -70,21 +70,23 @@
   const conwayCtx = conwayCanvas.getContext("2d");
 
   function createFloatingStick() {
-    const touchArea = document.getElementById("move-touch-area");
+    const touchArea = document.getElementById("controls");
     const zone = document.getElementById("move-zone");
     const knob = document.getElementById("move-knob");
+    const STICK_SIZE = 150;
     const state = {
       active: false,
-      touchId: null,
+      pointerId: null,
       centerX: 0,
       centerY: 0,
-      radius: 75,
+      radius: STICK_SIZE * 0.42,
       vector: { x: 0, y: 0 },
     };
 
     function placeStick(clientX, clientY) {
-      const size = zone.offsetWidth || 150;
-      const half = size / 2;
+      const half = STICK_SIZE / 2;
+      zone.style.width = `${STICK_SIZE}px`;
+      zone.style.height = `${STICK_SIZE}px`;
       zone.style.left = `${clientX - half}px`;
       zone.style.top = `${clientY - half}px`;
       state.centerX = clientX;
@@ -109,7 +111,7 @@
 
     function reset() {
       state.active = false;
-      state.touchId = null;
+      state.pointerId = null;
       state.vector.x = 0;
       state.vector.y = 0;
       knob.style.transform = "translate(0px, 0px)";
@@ -117,34 +119,33 @@
       zone.classList.add("hidden");
     }
 
-    touchArea.addEventListener("touchstart", (event) => {
+    touchArea.addEventListener("pointerdown", (event) => {
+      if (!running || gameOver) return;
       event.preventDefault();
-      const touch = event.changedTouches[0];
       state.active = true;
-      state.touchId = touch.identifier;
-      placeStick(touch.clientX, touch.clientY);
-      setVector(touch.clientX, touch.clientY);
-    }, { passive: false });
+      state.pointerId = event.pointerId;
+      touchArea.setPointerCapture(event.pointerId);
+      placeStick(event.clientX, event.clientY);
+      setVector(event.clientX, event.clientY);
+    });
 
-    touchArea.addEventListener("touchmove", (event) => {
+    touchArea.addEventListener("pointermove", (event) => {
+      if (!state.active || event.pointerId !== state.pointerId) return;
       event.preventDefault();
-      for (const touch of event.changedTouches) {
-        if (touch.identifier === state.touchId) {
-          setVector(touch.clientX, touch.clientY);
-        }
-      }
-    }, { passive: false });
+      setVector(event.clientX, event.clientY);
+    });
 
-    function endTouch(event) {
-      for (const touch of event.changedTouches) {
-        if (touch.identifier === state.touchId) {
-          reset();
-        }
+    function endPointer(event) {
+      if (!state.active || event.pointerId !== state.pointerId) return;
+      event.preventDefault();
+      if (touchArea.hasPointerCapture(event.pointerId)) {
+        touchArea.releasePointerCapture(event.pointerId);
       }
+      reset();
     }
 
-    touchArea.addEventListener("touchend", endTouch, { passive: false });
-    touchArea.addEventListener("touchcancel", endTouch, { passive: false });
+    touchArea.addEventListener("pointerup", endPointer);
+    touchArea.addEventListener("pointercancel", endPointer);
 
     return state;
   }
@@ -336,6 +337,10 @@
     return best;
   }
 
+  function aimAngle(fromX, fromY, toX, toY) {
+    return Math.atan2(fromY - toY, fromX - toX);
+  }
+
   function updatePlayer() {
     const player = game.player;
     if (!player) return;
@@ -348,9 +353,7 @@
 
     game.fireFrame++;
     if (game.currentTarget && game.fireFrame % FIRE_COOLDOWN_FRAMES === 0) {
-      const dx = game.currentTarget.x - player.x;
-      const dy = game.currentTarget.y - player.y;
-      const angle = Math.atan2(dy, dx);
+      const angle = aimAngle(player.x, player.y, game.currentTarget.x, game.currentTarget.y);
       fireBullets(player, angle);
     }
   }
