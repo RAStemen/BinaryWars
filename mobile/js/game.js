@@ -40,8 +40,7 @@
   let running = false;
   let gameOver = false;
 
-  const moveStick = createVirtualStick("move-zone", "move-knob");
-  const aimStick = createVirtualStick("aim-zone", "aim-knob");
+  const moveStick = createFloatingStick();
 
   const game = {
     score: 0,
@@ -59,6 +58,7 @@
     lastSpawn: 0,
     fireNow: true,
     fireFrame: 0,
+    currentTarget: null,
     corners: [],
     rand: Math.random,
   };
@@ -69,35 +69,42 @@
   conwayCanvas.height = CGOL_HEIGHT;
   const conwayCtx = conwayCanvas.getContext("2d");
 
-  function createVirtualStick(zoneId, knobId) {
-    const zone = document.getElementById(zoneId);
-    const knob = document.getElementById(knobId);
+  function createFloatingStick() {
+    const touchArea = document.getElementById("move-touch-area");
+    const zone = document.getElementById("move-zone");
+    const knob = document.getElementById("move-knob");
     const state = {
       active: false,
       touchId: null,
-      x: 0,
-      y: 0,
+      centerX: 0,
+      centerY: 0,
+      radius: 75,
       vector: { x: 0, y: 0 },
     };
 
-    function center() {
-      const rect = zone.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, radius: rect.width / 2 };
+    function placeStick(clientX, clientY) {
+      const size = zone.offsetWidth || 150;
+      const half = size / 2;
+      zone.style.left = `${clientX - half}px`;
+      zone.style.top = `${clientY - half}px`;
+      state.centerX = clientX;
+      state.centerY = clientY;
+      state.radius = half * 0.85;
+      zone.classList.remove("hidden");
+      zone.classList.add("active");
     }
 
     function setVector(clientX, clientY) {
-      const c = center();
-      let dx = clientX - c.x;
-      let dy = clientY - c.y;
+      let dx = clientX - state.centerX;
+      let dy = clientY - state.centerY;
       const dist = Math.hypot(dx, dy);
-      const maxDist = c.radius * 0.85;
-      if (dist > maxDist) {
-        dx = (dx / dist) * maxDist;
-        dy = (dy / dist) * maxDist;
+      if (dist > state.radius) {
+        dx = (dx / dist) * state.radius;
+        dy = (dy / dist) * state.radius;
       }
       knob.style.transform = `translate(${dx}px, ${dy}px)`;
-      state.vector.x = maxDist > 0 ? dx / maxDist : 0;
-      state.vector.y = maxDist > 0 ? dy / maxDist : 0;
+      state.vector.x = state.radius > 0 ? dx / state.radius : 0;
+      state.vector.y = state.radius > 0 ? dy / state.radius : 0;
     }
 
     function reset() {
@@ -107,18 +114,19 @@
       state.vector.y = 0;
       knob.style.transform = "translate(0px, 0px)";
       zone.classList.remove("active");
+      zone.classList.add("hidden");
     }
 
-    zone.addEventListener("touchstart", (event) => {
+    touchArea.addEventListener("touchstart", (event) => {
       event.preventDefault();
       const touch = event.changedTouches[0];
       state.active = true;
       state.touchId = touch.identifier;
-      zone.classList.add("active");
+      placeStick(touch.clientX, touch.clientY);
       setVector(touch.clientX, touch.clientY);
     }, { passive: false });
 
-    zone.addEventListener("touchmove", (event) => {
+    touchArea.addEventListener("touchmove", (event) => {
       event.preventDefault();
       for (const touch of event.changedTouches) {
         if (touch.identifier === state.touchId) {
@@ -135,8 +143,8 @@
       }
     }
 
-    zone.addEventListener("touchend", endTouch, { passive: false });
-    zone.addEventListener("touchcancel", endTouch, { passive: false });
+    touchArea.addEventListener("touchend", endTouch, { passive: false });
+    touchArea.addEventListener("touchcancel", endTouch, { passive: false });
 
     return state;
   }
@@ -300,6 +308,34 @@
     return actor.x < -margin || actor.x > width + margin || actor.y < -margin || actor.y > height + margin;
   }
 
+  function getEnemyThreat(enemy, player) {
+    const dx = enemy.x - player.x;
+    const dy = enemy.y - player.y;
+    const dist = Math.hypot(dx, dy) || 1;
+
+    const typeWeight = enemy.type === "one" ? 1.5 : 1.0;
+    const proximity = 10000 / (dist * dist + 400);
+    const dangerZone = dist < player.radius + enemy.radius + 60 ? 3 : 1;
+
+    return typeWeight * proximity * dangerZone;
+  }
+
+  function findHighestThreatEnemy(player) {
+    const enemies = game.zeroes.concat(game.ones);
+    if (enemies.length === 0) return null;
+
+    let best = null;
+    let bestThreat = -1;
+    for (const enemy of enemies) {
+      const threat = getEnemyThreat(enemy, player);
+      if (threat > bestThreat) {
+        bestThreat = threat;
+        best = enemy;
+      }
+    }
+    return best;
+  }
+
   function updatePlayer() {
     const player = game.player;
     if (!player) return;
@@ -308,12 +344,13 @@
     player.y += moveStick.vector.y * PLAYER_SPEED;
     clampActor(player);
 
+    game.currentTarget = findHighestThreatEnemy(player);
+
     game.fireFrame++;
-    const aimX = aimStick.vector.x;
-    const aimY = aimStick.vector.y;
-    const aimMag = Math.hypot(aimX, aimY);
-    if (aimMag > 0.2 && game.fireFrame % FIRE_COOLDOWN_FRAMES === 0) {
-      const angle = Math.atan2(aimY, aimX);
+    if (game.currentTarget && game.fireFrame % FIRE_COOLDOWN_FRAMES === 0) {
+      const dx = game.currentTarget.x - player.x;
+      const dy = game.currentTarget.y - player.y;
+      const angle = Math.atan2(dy, dx);
       fireBullets(player, angle);
     }
   }
@@ -581,19 +618,24 @@
     ctx.restore();
   }
 
-  function drawAimIndicator() {
-    if (!game.player) return;
-    const aimX = aimStick.vector.x;
-    const aimY = aimStick.vector.y;
-    if (Math.hypot(aimX, aimY) < 0.2) return;
+  function drawTargetIndicator() {
+    if (!game.player || !game.currentTarget) return;
 
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
-    ctx.strokeStyle = "rgba(124, 252, 0, 0.65)";
+    ctx.strokeStyle = "rgba(255, 80, 80, 0.7)";
     ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
     ctx.beginPath();
     ctx.moveTo(game.player.x, game.player.y);
-    ctx.lineTo(game.player.x + aimX * 40, game.player.y + aimY * 40);
+    ctx.lineTo(game.currentTarget.x, game.currentTarget.y);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.strokeStyle = "rgba(255, 80, 80, 0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(game.currentTarget.x, game.currentTarget.y, game.currentTarget.radius + 4, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -614,7 +656,7 @@
     for (const particle of game.particles) drawActor(particle);
 
     ctx.restore();
-    drawAimIndicator();
+    drawTargetIndicator();
   }
 
   function resize() {
@@ -658,6 +700,7 @@
     game.explosions = [];
     game.fireNow = true;
     game.fireFrame = 0;
+    game.currentTarget = null;
     game.lastSpawn = performance.now();
     game.player = createPlayer();
     conway.reset();

@@ -64,20 +64,24 @@ body.playing #controls {
   display: block;
 }
 
-.stick-zone {
+#move-touch-area {
   position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
-  width: min(38vw, 160px);
-  height: min(38vw, 160px);
+  left: 0;
+  bottom: 0;
+  width: 65%;
+  height: 55%;
   pointer-events: auto;
 }
 
-#move-zone {
-  left: calc(env(safe-area-inset-left, 16px) + 16px);
+.stick-zone {
+  position: absolute;
+  width: min(34vw, 150px);
+  height: min(34vw, 150px);
+  pointer-events: none;
 }
 
-#aim-zone {
-  right: calc(env(safe-area-inset-right, 16px) + 16px);
+.stick-zone.hidden {
+  opacity: 0;
 }
 
 .stick-base {
@@ -99,11 +103,6 @@ body.playing #controls {
   background: rgba(64, 224, 208, 0.55);
   border: 2px solid rgba(255, 255, 255, 0.35);
   transform: translate(0, 0);
-  transition: transform 0.05s linear;
-}
-
-#aim-zone .stick-knob {
-  background: rgba(124, 252, 0, 0.45);
 }
 
 .stick-zone.active .stick-base {
@@ -164,17 +163,13 @@ button:active {
 }
 
 @media (orientation: landscape) and (max-height: 500px) {
+  #move-touch-area {
+    width: 50%;
+    height: 70%;
+  }
+
   .stick-zone {
     width: min(22vh, 120px);
     height: min(22vh, 120px);
-    bottom: calc(env(safe-area-inset-bottom, 8px) + 8px);
-  }
-
-  #move-zone {
-    left: calc(env(safe-area-inset-left, 8px) + 8px);
-  }
-
-  #aim-zone {
-    right: calc(env(safe-area-inset-right, 8px) + 8px);
   }
 }
