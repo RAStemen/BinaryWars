@@ -3,7 +3,6 @@
   margin: 0;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
-  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -30,6 +29,7 @@ body {
   width: 100%;
   height: 100%;
   background: #000;
+  touch-action: none;
 }
 
 #hud {
@@ -71,6 +71,7 @@ body.playing #controls {
   width: 65%;
   height: 55%;
   pointer-events: auto;
+  touch-action: none;
 }
 
 .stick-zone {
@@ -122,6 +123,8 @@ body.playing #controls {
   background: rgba(0, 0, 0, 0.72);
   z-index: 10;
   text-align: center;
+  touch-action: manipulation;
+  cursor: pointer;
 }
 
 #menu.hidden,
@@ -152,6 +155,10 @@ button {
   font-size: 18px;
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }
 
 button:active {

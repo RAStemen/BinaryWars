@@ -734,16 +734,26 @@
     requestAnimationFrame(loop);
   }
 
-  btnStart.addEventListener("click", startGame);
-  btnStart.addEventListener("touchend", (event) => {
-    event.preventDefault();
-    startGame();
-  });
-  btnNewGame.addEventListener("click", startGame);
-  btnNewGame.addEventListener("touchend", (event) => {
-    event.preventDefault();
-    startGame();
-  });
+  function bindTap(element, handler) {
+    let lastActivation = 0;
+
+    function activate(event) {
+      const now = Date.now();
+      if (now - lastActivation < 350) return;
+      lastActivation = now;
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      handler();
+    }
+
+    element.addEventListener("pointerup", activate);
+    element.addEventListener("click", activate);
+  }
+
+  bindTap(startScreen, startGame);
+  bindTap(btnNewGame, startGame);
 
   window.addEventListener("resize", resize);
   document.addEventListener("contextmenu", (event) => event.preventDefault());
