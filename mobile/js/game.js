@@ -10,6 +10,12 @@
   const DIFFICULTY_RAMP_SECONDS = 90;
   const PLAYER_SPEED = 5;
   const FIRE_COOLDOWN_FRAMES = 6;
+  const ZERO_CHASE_SPEED = 3;
+  const ZERO_ORBIT_SPEED = 4;
+  const ONE_CHASE_SPEED = 3.6;
+  const DEATH_SLOWMO = 0.16;
+  const DEATH_COLLAPSE_MS = 1500;
+  const DEATH_EXPLODE_MS = 800;
   const CGOL_WIDTH = 100;
   const CGOL_HEIGHT = 75;
 
@@ -42,13 +48,13 @@
   let lastTimestamp = 0;
   let running = false;
   let gameOver = false;
+  let timeScale = 1;
 
   const moveStick = createFloatingStick();
 
   const game = {
     score: 0,
     multiplier: 1,
-    priorityMultiplier: 1,
     targetScore: BASE_POINTS_PER_KILL * 40,
     lives: MAX_LIVES,
     pointsPerKill: BASE_POINTS_PER_KILL,
@@ -63,10 +69,10 @@
     fireFrame: 0,
     currentTarget: null,
     startTime: 0,
-    difficultySpeed: 1,
     spawnInterval: SPAWN_INTERVAL_MS,
     enemyCap: COUNT_THRESHOLD,
     spawnBatch: 1,
+    deathSequence: null,
     corners: [],
     rand: Math.random,
   };
@@ -129,7 +135,7 @@
     }
 
     touchArea.addEventListener("pointerdown", (event) => {
-      if (!running || gameOver) return;
+      if (!running || gameOver || game.deathSequence) return;
       event.preventDefault();
       state.active = true;
       state.pointerId = event.pointerId;
@@ -290,7 +296,6 @@
     const ramp = Math.min(1, elapsed / DIFFICULTY_RAMP_SECONDS);
     const rampCurve = ramp * ramp;
 
-    game.difficultySpeed = 1 + rampCurve * 2.2 + elapsed * 0.025;
     game.spawnInterval = Math.max(
       MIN_SPAWN_INTERVAL_MS,
       SPAWN_INTERVAL_MS - rampCurve * (SPAWN_INTERVAL_MS - MIN_SPAWN_INTERVAL_MS)
@@ -463,24 +468,31 @@
     }
   }
 
-  function updateEnemy(enemy) {
+  function updateEnemy(enemy, pullTarget) {
     const player = game.player;
-    if (!player) return;
+    const targetX = pullTarget ? pullTarget.x : (player ? player.x : enemy.x);
+    const targetY = pullTarget ? pullTarget.y : (player ? player.y : enemy.y);
 
-    const dx = enemy.x - player.x;
-    const dy = enemy.y - player.y;
+    const dx = enemy.x - targetX;
+    const dy = enemy.y - targetY;
     const dist = Math.hypot(dx, dy) || 1;
-    const speedMul = game.priorityMultiplier * game.difficultySpeed;
-    const chaseSpeed = enemy.type === "one" ? 2.5 * speedMul : 2 * speedMul;
+
+    if (pullTarget) {
+      const pull = (6 + pullTarget.strength * 12) * timeScale;
+      enemy.x -= (dx / dist) * pull;
+      enemy.y -= (dy / dist) * pull;
+      return;
+    }
+
+    const chaseSpeed = enemy.type === "one" ? ONE_CHASE_SPEED : ZERO_CHASE_SPEED;
 
     enemy.x -= (dx / dist) * chaseSpeed;
     enemy.y -= (dy / dist) * chaseSpeed;
 
     if (enemy.type === "zero") {
-      const orbitSpeed = 3 * speedMul;
       const orbitAngle = Math.atan2(dy, dx) + (enemy.orbitClockwise ? -Math.PI / 2 : Math.PI / 2);
-      enemy.x -= Math.cos(orbitAngle) * orbitSpeed;
-      enemy.y -= Math.sin(orbitAngle) * orbitSpeed;
+      enemy.x -= Math.cos(orbitAngle) * ZERO_ORBIT_SPEED;
+      enemy.y -= Math.sin(orbitAngle) * ZERO_ORBIT_SPEED;
     }
 
     clampActor(enemy);
@@ -537,28 +549,125 @@
     });
   }
 
-  function clearScreen() {
-    game.bullets = [];
+  function clearEnemies() {
     game.zeroes = [];
     game.ones = [];
   }
 
-  function onPlayerHit() {
+  function clearScreen() {
+    game.bullets = [];
+    clearEnemies();
+  }
+
+  function startDeathSequence(x, y) {
+    game.deathSequence = {
+      phase: "collapse",
+      startTime: performance.now(),
+      x,
+      y,
+      blackHoleRadius: 18,
+      explodeRadius: 0,
+      strength: 0,
+    };
+    game.player = null;
+    game.bullets = [];
+    game.currentTarget = null;
+    timeScale = DEATH_SLOWMO;
+  }
+
+  function destroyEnemyAt(x, y, awardScore) {
+    if (awardScore) {
+      game.score += game.multiplier * game.pointsPerKill;
+      if (game.score > game.targetScore) {
+        game.targetScore *= 4;
+        game.multiplier *= 2;
+      }
+    }
+    generateParticles(x, y);
+    addExplosion(x, y);
+  }
+
+  function explodeAllEnemies(sequence) {
+    const enemies = game.zeroes.concat(game.ones);
+    for (const enemy of enemies) {
+      destroyEnemyAt(enemy.x, enemy.y, true);
+    }
+    clearEnemies();
+    addExplosion(sequence.x, sequence.y);
+    for (let i = 0; i < 3; i++) {
+      game.explosions.push({
+        x: sequence.x / width,
+        y: sequence.y / height,
+        size: 0.02 + i * 0.015,
+        phase: 1,
+      });
+    }
+  }
+
+  function updateDeathSequence(now) {
+    const sequence = game.deathSequence;
+    if (!sequence) return;
+
+    const elapsed = now - sequence.startTime;
+
+    if (sequence.phase === "collapse") {
+      const t = Math.min(1, elapsed / DEATH_COLLAPSE_MS);
+      sequence.strength = t;
+      sequence.blackHoleRadius = 18 + t * 42;
+
+      const pullTarget = { x: sequence.x, y: sequence.y, strength: sequence.strength };
+      for (const enemy of game.zeroes) updateEnemy(enemy, pullTarget);
+      for (const enemy of game.ones) updateEnemy(enemy, pullTarget);
+
+      if (elapsed >= DEATH_COLLAPSE_MS) {
+        sequence.phase = "explode";
+        sequence.explodeStart = now;
+        sequence.explodeRadius = sequence.blackHoleRadius;
+        timeScale = 0.45;
+        explodeAllEnemies(sequence);
+      }
+      return;
+    }
+
+    if (sequence.phase === "explode") {
+      const explodeElapsed = now - sequence.explodeStart;
+      const t = Math.min(1, explodeElapsed / DEATH_EXPLODE_MS);
+      sequence.explodeRadius = sequence.blackHoleRadius + t * Math.hypot(width, height) * 0.75;
+      sequence.blackHoleRadius *= 0.92;
+
+      if (explodeElapsed >= DEATH_EXPLODE_MS) {
+        sequence.phase = "done";
+        finishDeathSequence();
+      }
+    }
+  }
+
+  function finishDeathSequence() {
+    game.deathSequence = null;
+    timeScale = 1;
     game.lives -= 1;
-    clearScreen();
+    updateHud();
+
     if (game.lives <= 0) {
       endGame();
       return;
     }
+
     game.lastSpawn = performance.now() + 1000;
     game.player = createPlayer();
+  }
+
+  function onPlayerHit() {
+    if (game.deathSequence) return;
+    const player = game.player;
+    if (!player) return;
+    startDeathSequence(player.x, player.y);
   }
 
   function onEnemyKilled(x, y) {
     game.score += game.multiplier * game.pointsPerKill;
     if (game.score > game.targetScore) {
       game.targetScore *= 4;
-      game.priorityMultiplier *= 1.35;
       game.multiplier *= 2;
     }
     generateParticles(x, y);
@@ -601,6 +710,21 @@
 
   function update(timestamp) {
     if (!running || gameOver) return;
+
+    if (game.deathSequence) {
+      updateDeathSequence(timestamp);
+
+      const now = performance.now();
+      for (const particle of game.particles) updateParticle(particle);
+      game.particles = game.particles.filter((particle) => particle.expiresAt > now);
+      updateExplosions();
+
+      conway.randomize(5);
+      conway.stampActors(allActors());
+      conway.step();
+      conway.renderAlphaMask(conwayCtx);
+      return;
+    }
 
     updateDifficulty(timestamp);
     updatePlayer();
@@ -667,6 +791,109 @@
     ctx.restore();
   }
 
+  function drawEnemy(actor, blackHole) {
+    const dx = blackHole ? blackHole.x - actor.x : 0;
+    const dy = blackHole ? blackHole.y - actor.y : 0;
+    const dist = blackHole ? Math.hypot(dx, dy) || 1 : 1;
+    const angle = Math.atan2(dy, dx);
+    const stretch = blackHole ? 1 + Math.min(2.2, 120 / (dist + 20)) : 1;
+
+    ctx.save();
+    ctx.translate(actor.x, actor.y);
+    if (blackHole) {
+      ctx.rotate(angle);
+      ctx.scale(stretch, 1 / Math.sqrt(stretch));
+    }
+
+    if (actor.type === "zero") {
+      ctx.fillStyle = COLORS.zero;
+      ctx.beginPath();
+      ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
+      ctx.fill();
+      if (blackHole) {
+        ctx.strokeStyle = "rgba(124, 252, 0, 0.55)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(actor.radius * 1.6, 0);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#001100";
+      ctx.font = "bold 20px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("0", 0, 1);
+    } else if (actor.type === "one") {
+      ctx.fillStyle = COLORS.one;
+      ctx.beginPath();
+      ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
+      ctx.fill();
+      if (blackHole) {
+        ctx.strokeStyle = "rgba(0, 255, 127, 0.55)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(actor.radius * 1.6, 0);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#001100";
+      ctx.font = "bold 20px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("1", 0, 1);
+    }
+
+    ctx.restore();
+  }
+
+  function drawBlackHole(sequence) {
+    const { x, y, blackHoleRadius, explodeRadius, phase } = sequence;
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    if (phase === "explode" && explodeRadius > 0) {
+      const wave = ctx.createRadialGradient(0, 0, explodeRadius * 0.2, 0, 0, explodeRadius);
+      wave.addColorStop(0, "rgba(255, 255, 255, 0.85)");
+      wave.addColorStop(0.35, "rgba(124, 252, 0, 0.45)");
+      wave.addColorStop(1, "rgba(124, 252, 0, 0)");
+      ctx.fillStyle = wave;
+      ctx.beginPath();
+      ctx.arc(0, 0, explodeRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const disk = ctx.createRadialGradient(0, 0, blackHoleRadius * 0.2, 0, 0, blackHoleRadius * 1.8);
+    disk.addColorStop(0, "#000000");
+    disk.addColorStop(0.45, "#111111");
+    disk.addColorStop(0.7, "rgba(64, 224, 208, 0.35)");
+    disk.addColorStop(1, "rgba(64, 224, 208, 0)");
+    ctx.fillStyle = disk;
+    ctx.beginPath();
+    ctx.arc(0, 0, blackHoleRadius * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(0, 0, blackHoleRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const spikeCount = 12;
+    ctx.strokeStyle = "rgba(180, 180, 180, 0.35)";
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < spikeCount; i++) {
+      const spikeAngle = (Math.PI * 2 * i) / spikeCount + performance.now() * 0.001;
+      const inner = blackHoleRadius * 1.05;
+      const outer = blackHoleRadius * (1.8 + sequence.strength * 0.8);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(spikeAngle) * inner, Math.sin(spikeAngle) * inner);
+      ctx.lineTo(Math.cos(spikeAngle) * outer, Math.sin(spikeAngle) * outer);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
   function drawActor(actor) {
     ctx.save();
     ctx.translate(actor.x, actor.y);
@@ -680,26 +907,6 @@
       ctx.lineTo(-actor.radius, 0);
       ctx.closePath();
       ctx.fill();
-    } else if (actor.type === "zero") {
-      ctx.fillStyle = COLORS.zero;
-      ctx.beginPath();
-      ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#001100";
-      ctx.font = "bold 20px monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("0", 0, 1);
-    } else if (actor.type === "one") {
-      ctx.fillStyle = COLORS.one;
-      ctx.beginPath();
-      ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#001100";
-      ctx.font = "bold 20px monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("1", 0, 1);
     } else if (actor.type === "bullet") {
       ctx.fillStyle = COLORS.bullet;
       ctx.beginPath();
@@ -750,12 +957,17 @@
 
     if (game.player) drawActor(game.player);
     for (const bullet of game.bullets) drawActor(bullet);
-    for (const enemy of game.zeroes) drawActor(enemy);
-    for (const enemy of game.ones) drawActor(enemy);
+
+    const blackHole = game.deathSequence;
+    for (const enemy of game.zeroes) drawEnemy(enemy, blackHole);
+    for (const enemy of game.ones) drawEnemy(enemy, blackHole);
+
     for (const particle of game.particles) drawActor(particle);
 
+    if (blackHole) drawBlackHole(blackHole);
+
     ctx.restore();
-    drawTargetIndicator();
+    if (!blackHole) drawTargetIndicator();
   }
 
   function resize() {
@@ -800,8 +1012,9 @@
     game.fireNow = true;
     game.fireFrame = 0;
     game.currentTarget = null;
+    game.deathSequence = null;
+    timeScale = 1;
     game.startTime = performance.now();
-    game.difficultySpeed = 1;
     game.spawnInterval = SPAWN_INTERVAL_MS;
     game.enemyCap = COUNT_THRESHOLD;
     game.spawnBatch = 1;
@@ -830,10 +1043,14 @@
   }
 
   function loop(timestamp) {
-    if (timestamp - lastTimestamp >= 16) {
+    const frameDuration = timestamp - lastTimestamp;
+    const throttle = game.deathSequence ? 16 / DEATH_SLOWMO : 16;
+    if (frameDuration >= throttle) {
       update(timestamp);
-      draw();
       lastTimestamp = timestamp;
+    }
+    if (running || game.deathSequence) {
+      draw();
     }
     requestAnimationFrame(loop);
   }
