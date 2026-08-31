@@ -5,6 +5,9 @@
   const BASE_POINTS_PER_KILL = 128;
   const SPAWN_INTERVAL_MS = 500;
   const COUNT_THRESHOLD = 100;
+  const MIN_SPAWN_INTERVAL_MS = 70;
+  const MAX_ENEMY_CAP = 220;
+  const DIFFICULTY_RAMP_SECONDS = 90;
   const PLAYER_SPEED = 5;
   const FIRE_COOLDOWN_FRAMES = 6;
   const CGOL_WIDTH = 100;
@@ -59,6 +62,11 @@
     fireNow: true,
     fireFrame: 0,
     currentTarget: null,
+    startTime: 0,
+    difficultySpeed: 1,
+    spawnInterval: SPAWN_INTERVAL_MS,
+    enemyCap: COUNT_THRESHOLD,
+    spawnBatch: 1,
     corners: [],
     rand: Math.random,
   };
@@ -68,6 +76,7 @@
   conwayCanvas.width = CGOL_WIDTH;
   conwayCanvas.height = CGOL_HEIGHT;
   const conwayCtx = conwayCanvas.getContext("2d");
+  const backgroundImage = createBackgroundImage();
 
   function createFloatingStick() {
     const touchArea = document.getElementById("controls");
@@ -201,21 +210,99 @@
       grid.set(next);
     }
 
-    function renderTo(ctx2d) {
+    function renderAlphaMask(ctx2d) {
       const image = ctx2d.createImageData(w, h);
       const data = image.data;
       for (let i = 0; i < size; i++) {
-        const v = grid[i];
+        const alpha = grid[i];
         const p = i * 4;
-        data[p] = 20;
-        data[p + 1] = 120 + (v >> 1);
-        data[p + 2] = 40 + (v >> 2);
-        data[p + 3] = 255;
+        data[p] = 255;
+        data[p + 1] = 255;
+        data[p + 2] = 255;
+        data[p + 3] = alpha;
       }
       ctx2d.putImageData(image, 0, 0);
     }
 
-    return { randomize, stampActors, step, renderTo, reset() { grid.fill(0); next.fill(0); } };
+    return {
+      randomize,
+      stampActors,
+      step,
+      renderAlphaMask,
+      reset() { grid.fill(0); next.fill(0); },
+      getGrid() { return grid; },
+    };
+  }
+
+  function createBackgroundImage() {
+    const bg = document.createElement("canvas");
+    bg.width = 800;
+    bg.height = 600;
+    const bgCtx = bg.getContext("2d");
+
+    const gradient = bgCtx.createLinearGradient(0, 0, bg.width, bg.height);
+    gradient.addColorStop(0, "#001a12");
+    gradient.addColorStop(0.45, "#003322");
+    gradient.addColorStop(1, "#00110a");
+    bgCtx.fillStyle = gradient;
+    bgCtx.fillRect(0, 0, bg.width, bg.height);
+
+    bgCtx.strokeStyle = "rgba(64, 224, 208, 0.12)";
+    bgCtx.lineWidth = 1;
+    for (let x = 0; x < bg.width; x += 32) {
+      bgCtx.beginPath();
+      bgCtx.moveTo(x, 0);
+      bgCtx.lineTo(x, bg.height);
+      bgCtx.stroke();
+    }
+    for (let y = 0; y < bg.height; y += 32) {
+      bgCtx.beginPath();
+      bgCtx.moveTo(0, y);
+      bgCtx.lineTo(bg.width, y);
+      bgCtx.stroke();
+    }
+
+    bgCtx.fillStyle = "rgba(124, 252, 0, 0.08)";
+    for (let i = 0; i < 120; i++) {
+      const x = Math.random() * bg.width;
+      const y = Math.random() * bg.height;
+      const size = 4 + Math.random() * 20;
+      bgCtx.fillRect(x, y, size, 2);
+    }
+
+    const glow = bgCtx.createRadialGradient(520, 180, 20, 520, 180, 260);
+    glow.addColorStop(0, "rgba(64, 224, 208, 0.22)");
+    glow.addColorStop(1, "rgba(64, 224, 208, 0)");
+    bgCtx.fillStyle = glow;
+    bgCtx.fillRect(0, 0, bg.width, bg.height);
+
+    const glow2 = bgCtx.createRadialGradient(180, 420, 20, 180, 420, 220);
+    glow2.addColorStop(0, "rgba(124, 252, 0, 0.16)");
+    glow2.addColorStop(1, "rgba(124, 252, 0, 0)");
+    bgCtx.fillStyle = glow2;
+    bgCtx.fillRect(0, 0, bg.width, bg.height);
+
+    return bg;
+  }
+
+  function updateDifficulty(timestamp) {
+    const elapsed = Math.max(0, (timestamp - game.startTime) / 1000);
+    const ramp = Math.min(1, elapsed / DIFFICULTY_RAMP_SECONDS);
+    const rampCurve = ramp * ramp;
+
+    game.difficultySpeed = 1 + rampCurve * 2.2 + elapsed * 0.025;
+    game.spawnInterval = Math.max(
+      MIN_SPAWN_INTERVAL_MS,
+      SPAWN_INTERVAL_MS - rampCurve * (SPAWN_INTERVAL_MS - MIN_SPAWN_INTERVAL_MS)
+    );
+    game.enemyCap = Math.min(
+      MAX_ENEMY_CAP,
+      COUNT_THRESHOLD + Math.floor(rampCurve * (MAX_ENEMY_CAP - COUNT_THRESHOLD))
+    );
+
+    if (elapsed > 75) game.spawnBatch = 3;
+    else if (elapsed > 35) game.spawnBatch = 2;
+    else game.spawnBatch = 1;
   }
 
   function createPlayer() {
@@ -383,13 +470,14 @@
     const dx = enemy.x - player.x;
     const dy = enemy.y - player.y;
     const dist = Math.hypot(dx, dy) || 1;
-    const chaseSpeed = enemy.type === "one" ? 2.5 * game.priorityMultiplier : 2 * game.priorityMultiplier;
+    const speedMul = game.priorityMultiplier * game.difficultySpeed;
+    const chaseSpeed = enemy.type === "one" ? 2.5 * speedMul : 2 * speedMul;
 
     enemy.x -= (dx / dist) * chaseSpeed;
     enemy.y -= (dy / dist) * chaseSpeed;
 
     if (enemy.type === "zero") {
-      const orbitSpeed = 3 * game.priorityMultiplier;
+      const orbitSpeed = 3 * speedMul;
       const orbitAngle = Math.atan2(dy, dx) + (enemy.orbitClockwise ? -Math.PI / 2 : Math.PI / 2);
       enemy.x -= Math.cos(orbitAngle) * orbitSpeed;
       enemy.y -= Math.sin(orbitAngle) * orbitSpeed;
@@ -470,7 +558,7 @@
     game.score += game.multiplier * game.pointsPerKill;
     if (game.score > game.targetScore) {
       game.targetScore *= 4;
-      game.priorityMultiplier *= 1.25;
+      game.priorityMultiplier *= 1.35;
       game.multiplier *= 2;
     }
     generateParticles(x, y);
@@ -514,6 +602,7 @@
   function update(timestamp) {
     if (!running || gameOver) return;
 
+    updateDifficulty(timestamp);
     updatePlayer();
 
     for (const enemy of game.zeroes) updateEnemy(enemy);
@@ -526,8 +615,10 @@
     for (const particle of game.particles) updateParticle(particle);
     game.particles = game.particles.filter((particle) => particle.expiresAt > now);
 
-    if (timestamp - game.lastSpawn > SPAWN_INTERVAL_MS && enemyCount() < COUNT_THRESHOLD) {
-      spawnEnemy();
+    if (timestamp - game.lastSpawn > game.spawnInterval && enemyCount() < game.enemyCap) {
+      for (let i = 0; i < game.spawnBatch && enemyCount() < game.enemyCap; i++) {
+        spawnEnemy();
+      }
       game.lastSpawn = timestamp;
     }
 
@@ -537,7 +628,7 @@
     conway.randomize(5);
     conway.stampActors(allActors());
     conway.step();
-    conway.renderTo(conwayCtx);
+    conway.renderAlphaMask(conwayCtx);
 
     updateHud();
   }
@@ -551,10 +642,15 @@
   function drawBackground() {
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
-    ctx.fillStyle = "#050505";
+
+    ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, width, height);
+
+    ctx.drawImage(backgroundImage, 0, 0, width, height);
+    ctx.globalCompositeOperation = "destination-in";
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(conwayCanvas, 0, 0, width, height);
+    ctx.globalCompositeOperation = "source-over";
 
     for (const explosion of game.explosions) {
       const ex = explosion.x * width;
@@ -704,6 +800,11 @@
     game.fireNow = true;
     game.fireFrame = 0;
     game.currentTarget = null;
+    game.startTime = performance.now();
+    game.difficultySpeed = 1;
+    game.spawnInterval = SPAWN_INTERVAL_MS;
+    game.enemyCap = COUNT_THRESHOLD;
+    game.spawnBatch = 1;
     game.lastSpawn = performance.now();
     game.player = createPlayer();
     conway.reset();
