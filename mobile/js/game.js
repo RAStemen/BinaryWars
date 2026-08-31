@@ -13,9 +13,9 @@
   const ZERO_CHASE_SPEED = 3;
   const ZERO_ORBIT_SPEED = 4;
   const ONE_CHASE_SPEED = 3.6;
-  const DEATH_SLOWMO = 0.38;
-  const DEATH_COLLAPSE_MS = 1400;
-  const DEATH_EXPLODE_EXPAND = 1200;
+  const DEATH_SLOWMO = 0.55;
+  const DEATH_COLLAPSE_MS = 470;
+  const DEATH_EXPLODE_EXPAND = 3600;
   const WAVE_BULLET_SPEED = 11;
   const CGOL_WIDTH = 100;
   const CGOL_HEIGHT = 75;
@@ -230,11 +230,58 @@
       ctx2d.putImageData(image, 0, 0);
     }
 
+    function applyBlackHolePull(centerX, centerY, strength, viewportW, viewportH) {
+      const cx = (centerX / viewportW) * w;
+      const cy = (centerY / viewportH) * h;
+      const pulled = new Uint8Array(size);
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const dx = cx - x;
+          const dy = cy - y;
+          const dist = Math.hypot(dx, dy) || 0.001;
+          const falloff = Math.exp(-dist / (strength * 12 + 5));
+          const pullAmount = falloff * (1.5 + strength * 5);
+          const sx = Math.max(0, Math.min(w - 1, Math.round(x + (dx / dist) * pullAmount)));
+          const sy = Math.max(0, Math.min(h - 1, Math.round(y + (dy / dist) * pullAmount)));
+          let value = grid[idx(sx, sy)];
+
+          if (dist < strength * 9 + 4) {
+            value = Math.min(255, value + (1 - dist / (strength * 9 + 4)) * 200);
+          }
+          pulled[idx(x, y)] = value;
+        }
+      }
+
+      grid.set(pulled);
+    }
+
+    function applyExplosionWave(centerX, centerY, waveRadius, viewportW, viewportH) {
+      const cx = (centerX / viewportW) * w;
+      const cy = (centerY / viewportH) * h;
+      const gridRadius = (waveRadius / viewportW) * w;
+      const ring = Math.max(1.5, gridRadius * 0.1);
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = idx(x, y);
+          const dist = Math.hypot(x - cx, y - cy);
+          if (Math.abs(dist - gridRadius) <= ring) {
+            grid[i] = 255;
+          } else if (dist < gridRadius - ring) {
+            grid[i] = (grid[i] * 0.25) | 0;
+          }
+        }
+      }
+    }
+
     return {
       randomize,
       stampActors,
       step,
       renderAlphaMask,
+      applyBlackHolePull,
+      applyExplosionWave,
       reset() { grid.fill(0); next.fill(0); },
       getGrid() { return grid; },
     };
@@ -641,9 +688,10 @@
 
     if (sequence.phase === "explode") {
       sequence.explodeRadius += DEATH_EXPLODE_EXPAND * (deltaMs / 1000);
-      sequence.blackHoleRadius = Math.max(0, sequence.blackHoleRadius - 120 * (deltaMs / 1000));
+      sequence.blackHoleRadius = Math.max(0, sequence.blackHoleRadius - 280 * (deltaMs / 1000));
 
       destroyEnemiesHitByWave(sequence);
+      conway.applyExplosionWave(sequence.x, sequence.y, sequence.explodeRadius, width, height);
 
       const maxRadius = Math.hypot(width, height) * 1.15;
       if (sequence.explodeRadius >= maxRadius) {
@@ -722,8 +770,8 @@
     });
   }
 
-  function updateConway(stepCount) {
-    conway.randomize(stepCount);
+  function updateConway(randomCells, stepCount) {
+    conway.randomize(randomCells);
     conway.stampActors(allActors());
     for (let i = 0; i < stepCount; i++) {
       conway.step();
@@ -743,8 +791,8 @@
       updateExplosions();
 
       game.conwayAccumulator += deltaMs;
-      if (game.conwayAccumulator >= 32) {
-        updateConway(1);
+      if (game.conwayAccumulator >= 16) {
+        updateConway(2, 1);
         game.conwayAccumulator = 0;
       }
       return;
@@ -773,7 +821,7 @@
     handleCollisions();
     updateExplosions();
 
-    updateConway(1);
+    updateConway(5, 1);
 
     updateHud();
   }
