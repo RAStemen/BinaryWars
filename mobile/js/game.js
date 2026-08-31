@@ -29,8 +29,10 @@
     hud: "#ffffff",
   };
 
-  const canvas = document.getElementById("game");
+  const canvas = document.getElementById("game-bg");
+  const canvas3d = document.getElementById("game-3d");
   const ctx = canvas.getContext("2d");
+  let actorRenderer3d = null;
   const hudMultiplier = document.getElementById("hud-multiplier");
   const hudScore = document.getElementById("hud-score");
   const hudLives = document.getElementById("hud-lives");
@@ -860,60 +862,6 @@
     ctx.restore();
   }
 
-  function drawEnemy(actor, blackHole) {
-    const dx = blackHole ? blackHole.x - actor.x : 0;
-    const dy = blackHole ? blackHole.y - actor.y : 0;
-    const dist = blackHole ? Math.hypot(dx, dy) || 1 : 1;
-    const angle = Math.atan2(dy, dx);
-    const stretch = blackHole ? 1 + Math.min(2.2, 120 / (dist + 20)) : 1;
-
-    ctx.save();
-    ctx.translate(actor.x, actor.y);
-    if (blackHole) {
-      ctx.rotate(angle);
-      ctx.scale(stretch, 1 / Math.sqrt(stretch));
-    }
-
-    if (actor.type === "zero") {
-      ctx.fillStyle = COLORS.zero;
-      ctx.beginPath();
-      ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
-      ctx.fill();
-      if (blackHole) {
-        ctx.strokeStyle = "rgba(124, 252, 0, 0.55)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(actor.radius * 1.6, 0);
-        ctx.stroke();
-      }
-      ctx.fillStyle = "#001100";
-      ctx.font = "bold 20px monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("0", 0, 1);
-    } else if (actor.type === "one") {
-      ctx.fillStyle = COLORS.one;
-      ctx.beginPath();
-      ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
-      ctx.fill();
-      if (blackHole) {
-        ctx.strokeStyle = "rgba(0, 255, 127, 0.55)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(actor.radius * 1.6, 0);
-        ctx.stroke();
-      }
-      ctx.fillStyle = "#001100";
-      ctx.font = "bold 20px monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText("1", 0, 1);
-    }
-
-    ctx.restore();
-  }
 
   function drawBlackHole(sequence) {
     const { x, y, blackHoleRadius, explodeRadius, phase } = sequence;
@@ -970,16 +918,7 @@
     ctx.save();
     ctx.translate(actor.x, actor.y);
 
-    if (actor.type === "player") {
-      ctx.fillStyle = COLORS.player;
-      ctx.beginPath();
-      ctx.moveTo(0, -actor.radius);
-      ctx.lineTo(actor.radius, 0);
-      ctx.lineTo(0, actor.radius);
-      ctx.lineTo(-actor.radius, 0);
-      ctx.closePath();
-      ctx.fill();
-    } else if (actor.type === "bullet") {
+    if (actor.type === "bullet") {
       ctx.fillStyle = COLORS.bullet;
       ctx.beginPath();
       ctx.arc(0, 0, actor.radius, 0, Math.PI * 2);
@@ -1027,12 +966,9 @@
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
 
-    if (game.player) drawActor(game.player);
     for (const bullet of game.bullets) drawActor(bullet);
 
     const blackHole = game.deathSequence;
-    for (const enemy of game.zeroes) drawEnemy(enemy, blackHole);
-    for (const enemy of game.ones) drawEnemy(enemy, blackHole);
 
     for (const particle of game.particles) drawActor(particle);
 
@@ -1040,14 +976,31 @@
 
     ctx.restore();
     if (!blackHole) drawTargetIndicator();
+
+    if (actorRenderer3d) {
+      actorRenderer3d.sync(game);
+      actorRenderer3d.render();
+    }
+  }
+
+  function ensureActorRenderer3d() {
+    if (!window.ActorRenderer3D || !window.THREE) return null;
+    if (!actorRenderer3d) {
+      actorRenderer3d = new window.ActorRenderer3D(canvas3d, width, height);
+    }
+    return actorRenderer3d;
   }
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const displayWidth = window.innerWidth;
     const displayHeight = window.innerHeight;
-    canvas.width = Math.floor(displayWidth * dpr);
-    canvas.height = Math.floor(displayHeight * dpr);
+    const pixelWidth = Math.floor(displayWidth * dpr);
+    const pixelHeight = Math.floor(displayHeight * dpr);
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+    canvas3d.width = pixelWidth;
+    canvas3d.height = pixelHeight;
 
     const aspect = width / height;
     let drawWidth = displayWidth;
@@ -1061,12 +1014,22 @@
     offsetX = ((displayWidth - drawWidth) / 2) * dpr;
     offsetY = ((displayHeight - drawHeight) / 2) * dpr;
 
+    const drawWidthPx = drawWidth * dpr;
+    const drawHeightPx = drawHeight * dpr;
+
     game.corners = [
       { x: 0, y: 0 },
       { x: 0, y: height },
       { x: width, y: 0 },
       { x: width, y: height },
     ];
+
+    const renderer3d = ensureActorRenderer3d();
+    if (renderer3d) {
+      renderer3d.gameWidth = width;
+      renderer3d.gameHeight = height;
+      renderer3d.resize(pixelWidth, pixelHeight, scale, offsetX, offsetY, drawWidthPx, drawHeightPx);
+    }
   }
 
   function resetGame() {
@@ -1094,6 +1057,8 @@
     conway.reset();
     gameOver = false;
     menu.classList.add("hidden");
+    ensureActorRenderer3d();
+    if (actorRenderer3d) actorRenderer3d.clear();
     updateHud();
   }
 
@@ -1108,6 +1073,7 @@
     gameOver = true;
     running = false;
     game.player = null;
+    if (actorRenderer3d) actorRenderer3d.clear();
     document.body.classList.remove("playing");
     finalScore.textContent = `Score: ${game.score}`;
     menu.classList.remove("hidden");
