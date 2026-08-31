@@ -977,9 +977,13 @@
     ctx.restore();
     if (!blackHole) drawTargetIndicator();
 
-    if (actorRenderer3d) {
-      actorRenderer3d.sync(game);
-      actorRenderer3d.render();
+    const renderer3d = ensureActorRenderer3d();
+    if (renderer3d) {
+      renderer3d.sync(game);
+      renderer3d.render();
+    } else if (!draw._warnedMissingThree) {
+      draw._warnedMissingThree = true;
+      console.error("BinaryWars: Three.js renderer unavailable — 3D actors will not be drawn.");
     }
   }
 
