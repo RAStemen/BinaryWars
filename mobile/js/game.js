@@ -13,9 +13,10 @@
   const ZERO_CHASE_SPEED = 3;
   const ZERO_ORBIT_SPEED = 4;
   const ONE_CHASE_SPEED = 3.6;
-  const DEATH_SLOWMO = 0.16;
-  const DEATH_COLLAPSE_MS = 1500;
-  const DEATH_EXPLODE_MS = 800;
+  const DEATH_SLOWMO = 0.38;
+  const DEATH_COLLAPSE_MS = 1400;
+  const DEATH_EXPLODE_EXPAND = 1200;
+  const WAVE_BULLET_SPEED = 11;
   const CGOL_WIDTH = 100;
   const CGOL_HEIGHT = 75;
 
@@ -45,10 +46,9 @@
   let offsetX = 0;
   let offsetY = 0;
   let frame = 0;
-  let lastTimestamp = 0;
+  let lastFrameTime = 0;
   let running = false;
   let gameOver = false;
-  let timeScale = 1;
 
   const moveStick = createFloatingStick();
 
@@ -462,7 +462,7 @@
       }
     } else if (game.multiplier >= 4) {
       game.bullets.push(createBullet(player.x, player.y, 12, angle, false));
-      game.bullets.push(createBullet(player.x, player.y, 6, angle, true));
+      game.bullets.push(createBullet(player.x, player.y, WAVE_BULLET_SPEED, angle, true));
     } else {
       game.bullets.push(createBullet(player.x, player.y, 10, angle, false));
     }
@@ -478,7 +478,7 @@
     const dist = Math.hypot(dx, dy) || 1;
 
     if (pullTarget) {
-      const pull = (6 + pullTarget.strength * 12) * timeScale;
+      const pull = (6 + pullTarget.strength * 12) * pullTarget.delta;
       enemy.x -= (dx / dist) * pull;
       enemy.y -= (dy / dist) * pull;
       return;
@@ -563,6 +563,7 @@
     game.deathSequence = {
       phase: "collapse",
       startTime: performance.now(),
+      virtualElapsed: 0,
       x,
       y,
       blackHoleRadius: 18,
@@ -572,7 +573,7 @@
     game.player = null;
     game.bullets = [];
     game.currentTarget = null;
-    timeScale = DEATH_SLOWMO;
+    game.conwayAccumulator = 0;
   }
 
   function destroyEnemyAt(x, y, awardScore) {
@@ -587,55 +588,69 @@
     addExplosion(x, y);
   }
 
-  function explodeAllEnemies(sequence) {
-    const enemies = game.zeroes.concat(game.ones);
-    for (const enemy of enemies) {
-      destroyEnemyAt(enemy.x, enemy.y, true);
-    }
-    clearEnemies();
-    addExplosion(sequence.x, sequence.y);
-    for (let i = 0; i < 3; i++) {
-      game.explosions.push({
-        x: sequence.x / width,
-        y: sequence.y / height,
-        size: 0.02 + i * 0.015,
-        phase: 1,
-      });
-    }
+  function destroyEnemiesHitByWave(sequence) {
+    const waveEdge = sequence.explodeRadius;
+
+    game.zeroes = game.zeroes.filter((enemy) => {
+      const dist = Math.hypot(enemy.x - sequence.x, enemy.y - sequence.y);
+      if (dist <= waveEdge + enemy.radius) {
+        destroyEnemyAt(enemy.x, enemy.y, true);
+        return false;
+      }
+      return true;
+    });
+
+    game.ones = game.ones.filter((enemy) => {
+      const dist = Math.hypot(enemy.x - sequence.x, enemy.y - sequence.y);
+      if (dist <= waveEdge + enemy.radius) {
+        destroyEnemyAt(enemy.x, enemy.y, true);
+        return false;
+      }
+      return true;
+    });
   }
 
-  function updateDeathSequence(now) {
+  function updateDeathSequence(now, deltaMs) {
     const sequence = game.deathSequence;
     if (!sequence) return;
 
-    const elapsed = now - sequence.startTime;
+    const slowDelta = deltaMs * DEATH_SLOWMO;
+    sequence.virtualElapsed = (sequence.virtualElapsed || 0) + slowDelta;
 
     if (sequence.phase === "collapse") {
-      const t = Math.min(1, elapsed / DEATH_COLLAPSE_MS);
+      const t = Math.min(1, sequence.virtualElapsed / DEATH_COLLAPSE_MS);
       sequence.strength = t;
       sequence.blackHoleRadius = 18 + t * 42;
 
-      const pullTarget = { x: sequence.x, y: sequence.y, strength: sequence.strength };
+      const pullTarget = {
+        x: sequence.x,
+        y: sequence.y,
+        strength: sequence.strength,
+        delta: slowDelta / 16,
+      };
       for (const enemy of game.zeroes) updateEnemy(enemy, pullTarget);
       for (const enemy of game.ones) updateEnemy(enemy, pullTarget);
 
-      if (elapsed >= DEATH_COLLAPSE_MS) {
+      if (sequence.virtualElapsed >= DEATH_COLLAPSE_MS) {
         sequence.phase = "explode";
-        sequence.explodeStart = now;
         sequence.explodeRadius = sequence.blackHoleRadius;
-        timeScale = 0.45;
-        explodeAllEnemies(sequence);
+        addExplosion(sequence.x, sequence.y);
       }
       return;
     }
 
     if (sequence.phase === "explode") {
-      const explodeElapsed = now - sequence.explodeStart;
-      const t = Math.min(1, explodeElapsed / DEATH_EXPLODE_MS);
-      sequence.explodeRadius = sequence.blackHoleRadius + t * Math.hypot(width, height) * 0.75;
-      sequence.blackHoleRadius *= 0.92;
+      sequence.explodeRadius += DEATH_EXPLODE_EXPAND * (deltaMs / 1000);
+      sequence.blackHoleRadius = Math.max(0, sequence.blackHoleRadius - 120 * (deltaMs / 1000));
 
-      if (explodeElapsed >= DEATH_EXPLODE_MS) {
+      destroyEnemiesHitByWave(sequence);
+
+      const maxRadius = Math.hypot(width, height) * 1.15;
+      if (sequence.explodeRadius >= maxRadius) {
+        for (const enemy of game.zeroes.concat(game.ones)) {
+          destroyEnemyAt(enemy.x, enemy.y, true);
+        }
+        clearEnemies();
         sequence.phase = "done";
         finishDeathSequence();
       }
@@ -644,7 +659,6 @@
 
   function finishDeathSequence() {
     game.deathSequence = null;
-    timeScale = 1;
     game.lives -= 1;
     updateHud();
 
@@ -708,21 +722,31 @@
     });
   }
 
-  function update(timestamp) {
+  function updateConway(stepCount) {
+    conway.randomize(stepCount);
+    conway.stampActors(allActors());
+    for (let i = 0; i < stepCount; i++) {
+      conway.step();
+    }
+    conway.renderAlphaMask(conwayCtx);
+  }
+
+  function update(timestamp, deltaMs) {
     if (!running || gameOver) return;
 
     if (game.deathSequence) {
-      updateDeathSequence(timestamp);
+      updateDeathSequence(timestamp, deltaMs);
 
       const now = performance.now();
       for (const particle of game.particles) updateParticle(particle);
       game.particles = game.particles.filter((particle) => particle.expiresAt > now);
       updateExplosions();
 
-      conway.randomize(5);
-      conway.stampActors(allActors());
-      conway.step();
-      conway.renderAlphaMask(conwayCtx);
+      game.conwayAccumulator += deltaMs;
+      if (game.conwayAccumulator >= 32) {
+        updateConway(1);
+        game.conwayAccumulator = 0;
+      }
       return;
     }
 
@@ -749,10 +773,7 @@
     handleCollisions();
     updateExplosions();
 
-    conway.randomize(5);
-    conway.stampActors(allActors());
-    conway.step();
-    conway.renderAlphaMask(conwayCtx);
+    updateConway(1);
 
     updateHud();
   }
@@ -853,9 +874,12 @@
     ctx.translate(x, y);
 
     if (phase === "explode" && explodeRadius > 0) {
-      const wave = ctx.createRadialGradient(0, 0, explodeRadius * 0.2, 0, 0, explodeRadius);
-      wave.addColorStop(0, "rgba(255, 255, 255, 0.85)");
-      wave.addColorStop(0.35, "rgba(124, 252, 0, 0.45)");
+      const ringThickness = Math.max(18, explodeRadius * 0.08);
+      const inner = Math.max(0, explodeRadius - ringThickness);
+      const wave = ctx.createRadialGradient(0, 0, inner, 0, 0, explodeRadius);
+      wave.addColorStop(0, "rgba(255, 255, 255, 0)");
+      wave.addColorStop(0.55, "rgba(255, 255, 255, 0.75)");
+      wave.addColorStop(0.8, "rgba(124, 252, 0, 0.55)");
       wave.addColorStop(1, "rgba(124, 252, 0, 0)");
       ctx.fillStyle = wave;
       ctx.beginPath();
@@ -1000,7 +1024,6 @@
   function resetGame() {
     game.score = 0;
     game.multiplier = 1;
-    game.priorityMultiplier = 1;
     game.targetScore = BASE_POINTS_PER_KILL * 40;
     game.lives = MAX_LIVES;
     game.pointsPerKill = BASE_POINTS_PER_KILL;
@@ -1013,7 +1036,7 @@
     game.fireFrame = 0;
     game.currentTarget = null;
     game.deathSequence = null;
-    timeScale = 1;
+    game.conwayAccumulator = 0;
     game.startTime = performance.now();
     game.spawnInterval = SPAWN_INTERVAL_MS;
     game.enemyCap = COUNT_THRESHOLD;
@@ -1043,13 +1066,12 @@
   }
 
   function loop(timestamp) {
-    const frameDuration = timestamp - lastTimestamp;
-    const throttle = game.deathSequence ? 16 / DEATH_SLOWMO : 16;
-    if (frameDuration >= throttle) {
-      update(timestamp);
-      lastTimestamp = timestamp;
-    }
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    const deltaMs = Math.min(32, timestamp - lastFrameTime);
+    lastFrameTime = timestamp;
+
     if (running || game.deathSequence) {
+      update(timestamp, deltaMs);
       draw();
     }
     requestAnimationFrame(loop);
