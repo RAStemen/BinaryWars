@@ -2,7 +2,7 @@ import * as THREE from "three";
 
 window.THREE = THREE;
 
-const scripts = ["js/renderer3d.js?v=2", "js/game.js?v=10"];
+const scripts = ["js/renderer3d.js?v=3", "js/game.js?v=11"];
 
 for (const src of scripts) {
   await new Promise((resolve, reject) => {

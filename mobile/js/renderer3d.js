@@ -2,6 +2,7 @@
   "use strict";
 
   const ACTOR_SCALE = 1.15;
+  const CAMERA_FOV = 6;
 
   function createPlayerMesh() {
     const geometry = new THREE.OctahedronGeometry(1, 0);
@@ -53,6 +54,17 @@
     return mesh;
   }
 
+  function createGround(gameWidth, gameHeight) {
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(gameWidth * 1.4, gameHeight * 1.4),
+      new THREE.ShadowMaterial({ opacity: 0.22 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -2;
+    ground.receiveShadow = true;
+    return ground;
+  }
+
   function ActorRenderer3D(canvas, gameWidth, gameHeight) {
     this.gameWidth = gameWidth;
     this.gameHeight = gameHeight;
@@ -60,9 +72,7 @@
 
     this.scene = new THREE.Scene();
 
-    this.camera = new THREE.PerspectiveCamera(48, 1, 1, 4000);
-    this.camera.position.set(0, 420, 320);
-    this.camera.lookAt(0, 0, 0);
+    this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 1, 100000);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -79,11 +89,11 @@
     this.scene.add(ambient);
 
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.1);
-    keyLight.position.set(120, 260, 80);
+    keyLight.position.set(0, 400, 0);
     keyLight.castShadow = true;
     keyLight.shadow.mapSize.set(1024, 1024);
     keyLight.shadow.camera.near = 50;
-    keyLight.shadow.camera.far = 900;
+    keyLight.shadow.camera.far = 5000;
     keyLight.shadow.camera.left = -500;
     keyLight.shadow.camera.right = 500;
     keyLight.shadow.camera.top = 500;
@@ -91,26 +101,45 @@
     this.scene.add(keyLight);
 
     const rimLight = new THREE.DirectionalLight(0x40e0d0, 0.45);
-    rimLight.position.set(-180, 120, -140);
+    rimLight.position.set(-120, 200, -80);
     this.scene.add(rimLight);
 
     const fillLight = new THREE.DirectionalLight(0x7cfc00, 0.25);
-    fillLight.position.set(60, 80, 220);
+    fillLight.position.set(80, 160, 120);
     this.scene.add(fillLight);
 
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(gameWidth * 1.4, gameHeight * 1.4),
-      new THREE.ShadowMaterial({ opacity: 0.22 })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+    this.ground = createGround(gameWidth, gameHeight);
+    this.scene.add(this.ground);
 
     this.playerMesh = null;
     this.enemyMeshes = new Map();
-    this.tempVec = new THREE.Vector3();
+
+    this.updateCamera();
   }
+
+  ActorRenderer3D.prototype.updateCamera = function () {
+    const gameWidth = this.gameWidth;
+    const gameHeight = this.gameHeight;
+    const aspect = gameWidth / gameHeight;
+    const vFovRad = (CAMERA_FOV * Math.PI) / 180;
+    const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * aspect);
+    const distForHeight = (gameHeight / 2) / Math.tan(vFovRad / 2);
+    const distForWidth = (gameWidth / 2) / Math.tan(hFovRad / 2);
+    const distance = Math.max(distForHeight, distForWidth) * 1.01;
+
+    this.camera.position.set(0, distance, 0);
+    this.camera.lookAt(0, 0, 0);
+  };
+
+  ActorRenderer3D.prototype.updateGround = function () {
+    if (this.ground) {
+      this.scene.remove(this.ground);
+      this.ground.geometry.dispose();
+      this.ground.material.dispose();
+    }
+    this.ground = createGround(this.gameWidth, this.gameHeight);
+    this.scene.add(this.ground);
+  };
 
   ActorRenderer3D.prototype.gameToWorld = function (x, y) {
     return {
@@ -119,20 +148,17 @@
     };
   };
 
-  ActorRenderer3D.prototype.resize = function (pixelWidth, pixelHeight, scale, offsetX, offsetY, drawWidth, drawHeight) {
+  ActorRenderer3D.prototype.resize = function (pixelWidth, pixelHeight, gameWidth, gameHeight) {
+    this.gameWidth = gameWidth;
+    this.gameHeight = gameHeight;
+
     this.renderer.setSize(pixelWidth, pixelHeight, false);
-    this.viewport = { scale, offsetX, offsetY, pixelWidth, pixelHeight, drawWidth, drawHeight };
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, pixelWidth, pixelHeight);
 
-    const viewportWidth = Math.floor(drawWidth);
-    const viewportHeight = Math.floor(drawHeight);
-    const viewportX = Math.floor(offsetX);
-    const viewportY = Math.floor(pixelHeight - offsetY - drawHeight);
-
-    this.renderer.setScissorTest(true);
-    this.renderer.setScissor(viewportX, viewportY, viewportWidth, viewportHeight);
-    this.renderer.setViewport(viewportX, viewportY, viewportWidth, viewportHeight);
-
-    this.camera.aspect = drawWidth / drawHeight;
+    this.camera.aspect = gameWidth / gameHeight;
+    this.updateCamera();
+    this.updateGround();
     this.camera.updateProjectionMatrix();
   };
 
@@ -216,7 +242,7 @@
     if (game.player) {
       const mesh = this.ensurePlayerMesh();
       const world = this.gameToWorld(game.player.x, game.player.y);
-      mesh.position.set(world.x, 6, world.z);
+      mesh.position.set(world.x, 4, world.z);
       mesh.rotation.y = performance.now() * 0.0018;
       mesh.rotation.z = Math.sin(performance.now() * 0.003) * 0.08;
     } else {

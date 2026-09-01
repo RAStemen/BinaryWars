@@ -17,8 +17,8 @@
   const DEATH_COLLAPSE_MS = 470;
   const DEATH_EXPLODE_EXPAND = 3600;
   const WAVE_BULLET_SPEED = 11;
-  const CGOL_WIDTH = 100;
-  const CGOL_HEIGHT = 75;
+  const CGOL_WIDTH = 75;
+  const CGOL_HEIGHT = 100;
 
   const COLORS = {
     player: "#40e0d0",
@@ -42,8 +42,8 @@
   const btnNewGame = document.getElementById("btn-new-game");
   const btnStart = document.getElementById("btn-start");
 
-  let width = 800;
-  let height = 600;
+  let width = window.innerWidth;
+  let height = window.innerHeight;
   let scale = 1;
   let offsetX = 0;
   let offsetY = 0;
@@ -84,7 +84,7 @@
   conwayCanvas.width = CGOL_WIDTH;
   conwayCanvas.height = CGOL_HEIGHT;
   const conwayCtx = conwayCanvas.getContext("2d");
-  const backgroundImage = createBackgroundImage();
+  let backgroundImage = createBackgroundImage(width, height);
 
   function createFloatingStick() {
     const touchArea = document.getElementById("controls");
@@ -289,10 +289,10 @@
     };
   }
 
-  function createBackgroundImage() {
+  function createBackgroundImage(w, h) {
     const bg = document.createElement("canvas");
-    bg.width = 800;
-    bg.height = 600;
+    bg.width = w;
+    bg.height = h;
     const bgCtx = bg.getContext("2d");
 
     const gradient = bgCtx.createLinearGradient(0, 0, bg.width, bg.height);
@@ -325,13 +325,13 @@
       bgCtx.fillRect(x, y, size, 2);
     }
 
-    const glow = bgCtx.createRadialGradient(520, 180, 20, 520, 180, 260);
+    const glow = bgCtx.createRadialGradient(w * 0.65, h * 0.3, 20, w * 0.65, h * 0.3, Math.max(w, h) * 0.35);
     glow.addColorStop(0, "rgba(64, 224, 208, 0.22)");
     glow.addColorStop(1, "rgba(64, 224, 208, 0)");
     bgCtx.fillStyle = glow;
     bgCtx.fillRect(0, 0, bg.width, bg.height);
 
-    const glow2 = bgCtx.createRadialGradient(180, 420, 20, 180, 420, 220);
+    const glow2 = bgCtx.createRadialGradient(w * 0.22, h * 0.7, 20, w * 0.22, h * 0.7, Math.max(w, h) * 0.3);
     glow2.addColorStop(0, "rgba(124, 252, 0, 0.16)");
     glow2.addColorStop(1, "rgba(124, 252, 0, 0)");
     bgCtx.fillStyle = glow2;
@@ -1001,25 +1001,20 @@
     const displayHeight = window.innerHeight;
     const pixelWidth = Math.floor(displayWidth * dpr);
     const pixelHeight = Math.floor(displayHeight * dpr);
+
+    width = displayWidth;
+    height = displayHeight;
+
     canvas.width = pixelWidth;
     canvas.height = pixelHeight;
     canvas3d.width = pixelWidth;
     canvas3d.height = pixelHeight;
 
-    const aspect = width / height;
-    let drawWidth = displayWidth;
-    let drawHeight = displayWidth / aspect;
-    if (drawHeight > displayHeight) {
-      drawHeight = displayHeight;
-      drawWidth = displayHeight * aspect;
-    }
+    scale = dpr;
+    offsetX = 0;
+    offsetY = 0;
 
-    scale = (drawWidth / width) * dpr;
-    offsetX = ((displayWidth - drawWidth) / 2) * dpr;
-    offsetY = ((displayHeight - drawHeight) / 2) * dpr;
-
-    const drawWidthPx = drawWidth * dpr;
-    const drawHeightPx = drawHeight * dpr;
+    backgroundImage = createBackgroundImage(width, height);
 
     game.corners = [
       { x: 0, y: 0 },
@@ -1030,9 +1025,7 @@
 
     const renderer3d = ensureActorRenderer3d();
     if (renderer3d) {
-      renderer3d.gameWidth = width;
-      renderer3d.gameHeight = height;
-      renderer3d.resize(pixelWidth, pixelHeight, scale, offsetX, offsetY, drawWidthPx, drawHeightPx);
+      renderer3d.resize(pixelWidth, pixelHeight, width, height);
     }
   }
 
