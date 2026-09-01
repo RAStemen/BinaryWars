@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#000000">
+  <title>BinaryWars</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="game-viewport" aria-label="BinaryWars game canvas">
+      <canvas id="game-bg"></canvas>
+      <canvas id="game-3d"></canvas>
+    </div>
+
+    <div id="hud">
+      <span id="hud-multiplier">Multiplier: 1</span>
+      <span id="hud-score">Score: 0</span>
+      <span id="hud-lives">Lives: 5</span>
+    </div>
+
+    <div id="controls" aria-hidden="true">
+      <div class="stick-zone hidden" id="move-zone">
+        <div class="stick-base"></div>
+        <div class="stick-knob" id="move-knob"></div>
+      </div>
+    </div>
+
+    <div id="menu" class="hidden">
+      <h1>Game Over</h1>
+      <p id="final-score">Score: 0</p>
+      <button id="btn-new-game" type="button">New Game</button>
+    </div>
+
+    <div id="start-screen">
+      <h1>BinaryWars</h1>
+      <p class="hint">Touch anywhere to move — the stick appears under your finger. Weapons auto-target threats.</p>
+      <button id="btn-start" type="button">Tap to Start</button>
+    </div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+  <script type="module" src="js/bootstrap.js?v=1"></script>
+</body>
+</html>
